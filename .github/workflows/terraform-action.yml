@@ -5,12 +5,14 @@ on:
       - main
   pull_request:
 permissions:
-      id-token: write # This is required for aws oidc connection
-      contents: read # This is required for actions/checkout
-      pull-requests: write # This is required for gh bot to comment PR
+  id-token: write  # Required for AWS OIDC authentication
+  contents: read   # Required for actions/checkout
+  pull-requests: write # Required for GitHub bot to comment on PR
+
 env:
   TF_LOG: INFO
   AWS_REGION: us-east-1
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -28,6 +30,7 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE }}
           aws-region: us-east-1
           role-session-name: GitHub-OIDC-TERRAFORM
+          audience: sts.amazonaws.com  # Ensuring audience is set correctly
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
@@ -52,14 +55,22 @@ jobs:
 
       - name: Terraform Plan
         id: plan
-        run: terraform plan -no-color
+        run: terraform plan -no-color -out=tfplan
         if: github.event_name == 'pull_request'
         continue-on-error: true
+
+      - name: Capture Terraform Plan Output
+        id: plan_output
+        if: github.event_name == 'pull_request'
+        run: |
+          echo 'PLAN<<EOF' >> $GITHUB_ENV
+          terraform show -no-color tfplan >> $GITHUB_ENV
+          echo 'EOF' >> $GITHUB_ENV
 
       - uses: actions/github-script@v6
         if: github.event_name == 'pull_request'
         env:
-          PLAN: "terraform\n${{ steps.plan.outputs.stdout }}"
+          PLAN: "${{ env.PLAN }}"
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -91,7 +102,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: output
-            })
+            });
 
       - name: Terraform Plan Status
         if: steps.plan.outcome == 'failure'
